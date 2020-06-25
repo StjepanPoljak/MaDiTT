@@ -162,33 +162,62 @@ md_files_check() {
 
 read_range() {
 
-	output `printf '%s\n' "$FILE_CONTENTS" | sed -n "$1,$2p"`
+	NUM_LINES="`echo "$2-$1" | awk -F'-' '{ print $1 - $2 }'`"
+	output "`printf '%s' "$FILE_CONTENTS" | sed -n "$1,$2p"`" "$NUM_LINES"
 }
 
 edit_range() {
 
+	TEMP_FILE=""
+	TEMP_FILE_MD5=""
+
 	if [ -z "$3" ]; then
-		TEMP_FILE=`mktemp`
+		TEMP_FILE="`mktemp`"
 		read_range $1 $2 > "$TEMP_FILE"
+
+		TEMP_FILE_MD5="`md5sum "$TEMP_FILE" | awk '{ print $1 }'`"
+
 		$EDITOR "$TEMP_FILE"
+
+		NEW_MD5="`md5sum "$TEMP_FILE" | awk '{ print $1 }'`"
+
+		if [ "$NEW_MD5" = "$TEMP_FILE_MD5" ]; then
+			rm "$TEMP_FILE"
+			return 0
+		fi
 	elif [ "$3" != "delete" ]; then
 		echo "(!) Internal bug!"
 		exit -1
 	fi
 
-	KEEP_UNTIL=`printf '%s\n' "$1" | awk '{ print $1 - 1 }'`
-	KEEP_AFTER="$2"
+	KEEP_UNTIL="`printf '%s\n' "$1" | awk '{ print $1 - 1 }'`"
+	KEEP_AFTER="`printf '%s\n' "$2" | awk '{ print $1 + 1 }'`"
 
-	FIRST_PART=`printf '%s\n' "$FILE_CONTENTS" \
-		    | sed -n "1,${KEEP_UNTIL}p"`
-	SECOND_PART=`printf '%s\n' "$FILE_CONTENTS" \
-		    | sed -n "${KEEP_AFTER},\\$p"`
+	FIRST_PART="`printf '%s\n' "$FILE_CONTENTS" \
+		    | sed -n "1,${KEEP_UNTIL}p"`"
+	SECOND_PART="`printf '%s\n' "$FILE_CONTENTS" \
+		    | sed -n "${KEEP_AFTER},\\$p"`"
 
 	UNDO_KEEP="$FILE_CONTENTS"
 
 	if [ "$3" != "delete" ]; then
-		CHANGES=`cat "$TEMP_FILE"`
-		FILE_CONTENTS="${FIRST_PART}${CHANGES}${SECOND_PART}"
+		CHANGES="`cat "$TEMP_FILE"`"
+		CHANGES_NUML=`echo "$CHANGES" | wc -l`
+		TEMP_FILE_NUML=`cat "$TEMP_FILE" | wc -l`
+		if [ "$TEMP_FILE_NUML" -ge $CHANGES_NUML ]; then
+			FILE_CONTENTS=\
+"${FIRST_PART}
+
+${CHANGES}
+
+${SECOND_PART}"
+		else
+			FILE_CONTENTS=\
+"${FIRST_PART}
+
+${CHANGES}
+${SECOND_PART}"
+		fi
 		rm "$TEMP_FILE"
 	else
 		FILE_CONTENTS="${FIRST_PART}${SECOND_PART}"
@@ -199,7 +228,12 @@ output() {
 	if [ "$2" = "FORCE_ECHO" ]; then
 		echo "$1" | "$READER"
 	else
-		printf '%s\n' "$1" | "$READER"
+		NUM_LINES=`echo "$1" | wc -l`
+		if [ "$2" -ge $NUM_LINES ]; then
+			printf '%s\n\n' "$1" | "$READER"
+		else
+			printf '%s\n' "$1" | "$READER"
+		fi
 	fi
 }
 
@@ -246,8 +280,8 @@ while [ 1 ]; do
 			;;
 
 		getmds)
-			MD_FILES=`find -name '*.md' \
-				  | awk '{ print "f" NR "\t" $0 }'`
+			MD_FILES="`find -name '*.md' \
+				  | awk '{ print "f" NR "\t" $0 }'`"
 
 			md_files_check
 			if [ "$?" -ne 0 ]; then
@@ -268,7 +302,7 @@ while [ 1 ]; do
 			printf '%s\n' "$MD_FILES"
 			;;
 
-		loadfn*|load*)
+		loadfn\ *|load\ *)
 			printf '%s\n' "$INPUT" | grep 'loadfn' > /dev/null
 
 			if [ "$?" -ne 0 ]; then
@@ -279,12 +313,12 @@ while [ 1 ]; do
 					continue
 				fi
 
-				FPT=`printf '%s\n' "$INPUT" \
-				     | awk '{ print $2 }'`
+				FPT="`printf '%s\n' "$INPUT" \
+				     | awk '{ print $2 }'`"
 
-				CURR_FILE=`printf '%s\n' "$MD_FILES" \
+				CURR_FILE="`printf '%s\n' "$MD_FILES" \
 					   | grep "$FPT" \
-					   | awk -F'\t' '{ print $2 }'`
+					   | awk -F'\t' '{ print $2 }'`"
 
 				if [ -z "$CURR_FILE" ]; then
 					echo "(!) Invalid file pointer." \
@@ -293,8 +327,8 @@ while [ 1 ]; do
 				fi
 
 			else
-				CURR_FILE=`printf '%s\n' "$INPUT" \
-					   | awk '{ print $2 }'`
+				CURR_FILE="`printf '%s\n' "$INPUT" \
+					   | awk '{ print $2 }'`"
 
 				if [ -z "$CURR_FILE" ]; then
 					echo "(!) No file name given."
@@ -314,7 +348,7 @@ while [ 1 ]; do
 				continue
 			fi
 
-			PARSED_STRING=`pre_parse`
+			PARSED_STRING="`pre_parse`"
 
 			if [ -z "$PARSED_STRING" ]; then
 				echo "(!) String not parsed or wrong format."
@@ -376,8 +410,8 @@ while [ 1 ]; do
 				continue
 			fi
 
-			RANGE_ARGS=`printf '%s\n' "$RANGE" \
-				    | awk -F':' ' { print $2 OFS $6 }'`
+			RANGE_ARGS="`printf '%s\n' "$RANGE" \
+				    | awk -F':' ' { print $2 OFS $6 }'`"
 
 			printf '%s\n' "$INPUT" | grep '^read ' > /dev/null
 
@@ -414,9 +448,9 @@ while [ 1 ]; do
 		showread)
 			echo "\"$READER\""
 			;;
-		setread*)
-			PARAM=`echo "$INPUT" \
-			       | sed -n 's/^setread \(.*\)$/\1/p'`
+		setread\ *)
+			PARAM="`echo "$INPUT" \
+			       | sed -n 's/^setread \(.*\)$/\1/p'`"
 
 			if [ -z "$PARAM" ]; then
 				echo "(!) Please set command as argument."
@@ -428,15 +462,33 @@ while [ 1 ]; do
 		showedit)
 			echo "\"$EDITOR\""
 			;;
-		setedit*)
-			PARAM=`echo "$INPUT" \
-			       | sed -n 's/^setedit \(.*\)$/\1/p'`
+		setedit\ *)
+			PARAM="`echo "$INPUT" \
+			       | sed -n 's/^setedit \(.*\)$/\1/p'`"
 
 			if [ -z "$PARAM" ]; then
 				echo "(!) Please set command as argument."
 			fi
 
 			EDITOR="$PARAM"
+			;;
+		undo)
+			if ! [ -z "$UNDO_KEEP" ]; then
+				REDO_KEEP="$FILE_CONTENTS"
+				FILE_CONTENTS="$UNDO_KEEP"
+				UNDO_KEEP=""
+			else
+				echo "(*) Nothing to undo."
+			fi
+			;;
+		redo)
+			if ! [ -z "$REDO_KEEP" ]; then
+				UNDO_KEEP="$FILE_CONTENTS"
+				FILE_CONTENTS="$REDO_KEEP"
+				REDO_KEEP=""
+			else
+				echo "(*) Nothing to redo."
+			fi
 			;;
 		quit|exit)
 			break
