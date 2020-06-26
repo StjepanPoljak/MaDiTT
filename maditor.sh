@@ -26,7 +26,30 @@ check_file() {
 
 pre_parse() {
 
-	printf '%s\n' "$FILE_CONTENTS" \
+	printf '%s' "$FILE_CONTENTS" \
+	| awk '
+	BEGIN {
+		parsing = 1
+	}
+	{
+		if ($0 ~ /^```.*$/) {
+			if (parsing == 1) {
+				parsing = 0
+			}
+			else {
+				parsing = 1
+			}
+			print QUOTE
+		}
+		else {
+			if (parsing == 1) {
+				print $0
+			}
+			else {
+				print QUOTE
+			}
+		}
+	}' \
 	| grep -n '^#' \
 	| sed -n 's/^\([0-9]\+\):\(#\+\)\s\(.*\)$/\1\t\2\t\3/p' \
 	| awk -F'\t' -v wcount=`printf '%s\n' "$FILE_CONTENTS" | wc -l` '
@@ -99,6 +122,70 @@ pre_parse() {
 	}'
 }
 
+load_file() {
+
+	COMM="$1"
+
+	printf '%s' "$COMM" | grep 'loadfn ' > /dev/null
+
+	if [ "$?" -ne 0 ]; then
+
+		md_files_check
+
+		if [ "$?" -ne 0 ]; then
+			return 1
+		fi
+
+		FPT="`printf '%s\n' "$COMM" \
+		     | awk '{ print $2 }'`"
+
+		CURR_FILE="`printf '%s\n' "$MD_FILES" \
+			   | grep "$FPT" \
+			   | awk -F'\t' '{ print $2 }'`"
+
+		if [ -z "$CURR_FILE" ]; then
+			echo "(!) Invalid file pointer." \
+			     "See: showmds"
+			return 2
+		fi
+
+	else
+		CURR_FILE="`printf '%s\n' "$COMM" \
+			   | awk '{ print $2 }'`"
+
+		if [ -z "$CURR_FILE" ]; then
+			echo "(!) No file name given."
+			return 3
+		fi
+	fi
+
+	if ! [ -f "$CURR_FILE" ]; then
+		echo "(!) File $CURR_FILE not found."
+		return 4
+	fi
+
+	FILE_CONTENTS="`cat "$CURR_FILE"; echo .`"
+	FILE_CONTENTS="${FILE_CONTENTS%.}"
+
+	check_file
+	if [ "$?" -ne 0 ]; then
+		return 5
+	fi
+
+	PARSED_STRING="`pre_parse`"
+
+	if [ -z "$PARSED_STRING" ]; then
+		echo "(!) String not parsed or wrong format."
+		CURR_FILE=""
+		FILE_CONTENTS=""
+		return 6
+	fi
+
+	output "`human_readable "$PARSED_STRING"`" NL
+
+	return 0
+}
+
 human_readable() {
 
 	printf '%s\n' "$1" \
@@ -162,8 +249,8 @@ md_files_check() {
 
 read_range() {
 
-	NUM_LINES="`echo "$2-$1" | awk -F'-' '{ print $1 - $2 }'`"
-	output "`printf '%s' "$FILE_CONTENTS" | sed -n "$1,$2p"`" "$NUM_LINES"
+	TO_OUTPUT="`printf '%s' "$FILE_CONTENTS" | sed -n "$1,$2p"; echo .`"
+	output "${TO_OUTPUT%.}"
 }
 
 edit_range() {
@@ -194,46 +281,102 @@ edit_range() {
 	KEEP_AFTER="`printf '%s\n' "$2" | awk '{ print $1 + 1 }'`"
 
 	FIRST_PART="`printf '%s\n' "$FILE_CONTENTS" \
-		    | sed -n "1,${KEEP_UNTIL}p"`"
+		    | sed -n "1,${KEEP_UNTIL}p"; echo .`"
+	FIRST_PART="${FIRST_PART%.}"
+
 	SECOND_PART="`printf '%s\n' "$FILE_CONTENTS" \
-		    | sed -n "${KEEP_AFTER},\\$p"`"
+		    | sed -n "${KEEP_AFTER},\\$p"; echo .`"
+	SECOND_PART="${SECOND_PART%.}"
 
 	UNDO_KEEP="$FILE_CONTENTS"
 
 	if [ "$3" != "delete" ]; then
-		CHANGES="`cat "$TEMP_FILE"`"
-		CHANGES_NUML=`echo "$CHANGES" | wc -l`
-		TEMP_FILE_NUML=`cat "$TEMP_FILE" | wc -l`
-		if [ "$TEMP_FILE_NUML" -ge $CHANGES_NUML ]; then
-			FILE_CONTENTS=\
-"${FIRST_PART}
-
-${CHANGES}
-
-${SECOND_PART}"
-		else
-			FILE_CONTENTS=\
-"${FIRST_PART}
-
-${CHANGES}
-${SECOND_PART}"
-		fi
+		CHANGES="`cat "$TEMP_FILE"; echo .`"
+		CHANGES="${CHANGES%.}"
+		FILE_CONTENTS="${FIRST_PART}${CHANGES}${SECOND_PART}"
 		rm "$TEMP_FILE"
 	else
 		FILE_CONTENTS="${FIRST_PART}${SECOND_PART}"
 	fi
 }
 
+range_ops() {
+
+	COMM="$1"
+
+	check_file
+	if [ "$?" -ne 0 ]; then
+		return 1
+	fi
+
+	SECT=`printf '%s\n' "$COMM" | awk '{ print $2 }'`
+
+	if [ -z "$SECT" ]; then
+		echo "(!) Please input section."
+		return 2
+	fi
+
+	RANGE=`sect_range "$PARSED_STRING" "$SECT"`
+
+	if [ "$?" -ne 0 ]; then
+		echo "(!) Could not find section: $SECT"
+		return 3
+	fi
+
+	printf '%s\n' "$COMM" | grep '^range ' > /dev/null
+
+	if [ "$?" -eq 0 ]; then
+		echo "$RANGE" \
+		| awk -F':' '
+		{
+			print $1 ": " $2
+			print $3 ": " $4
+			print $5 ": " $6
+		}'
+		return 0
+	fi
+
+	RANGE_ARGS="`printf '%s\n' "$RANGE" \
+		    | awk -F':' ' { print $2 OFS $6 }'`"
+
+	case $COMM in
+		read\ *)
+			read_range $RANGE_ARGS
+			;;
+		edit\ *)
+			edit_range $RANGE_ARGS
+			;;
+		delete\ *)
+			edit_range $RANGE_ARGS delete
+			;;
+		*)
+			return 4
+			;;
+	esac
+
+	case $COMM in
+		delete\ *|edit\ *)
+			PARSED_STRING=`pre_parse`
+
+			if [ -z "$PARSED_STRING" ]; then
+				echo "(!) String not parsed or wrong format."
+				CURR_FILE=""
+				FILE_CONTENTS=""
+				return 4
+			fi
+			;;
+	esac
+
+	return 0
+}
+
 output() {
 	if [ "$2" = "FORCE_ECHO" ]; then
 		echo "$1" | "$READER"
+	elif [ "$2" = "NL" ]; then
+		printf '%s\n' "$1" | "$READER"
 	else
-		NUM_LINES=`echo "$1" | wc -l`
-		if [ "$2" -ge $NUM_LINES ]; then
-			printf '%s\n\n' "$1" | "$READER"
-		else
-			printf '%s\n' "$1" | "$READER"
-		fi
+		printf '%s' "$1" | "$READER"
 	fi
 }
 
@@ -303,61 +446,7 @@ while [ 1 ]; do
 			;;
 
 		loadfn\ *|load\ *)
-			printf '%s\n' "$INPUT" | grep 'loadfn' > /dev/null
-
-			if [ "$?" -ne 0 ]; then
-
-				md_files_check
-
-				if [ "$?" -ne 0 ]; then
-					continue
-				fi
-
-				FPT="`printf '%s\n' "$INPUT" \
-				     | awk '{ print $2 }'`"
-
-				CURR_FILE="`printf '%s\n' "$MD_FILES" \
-					   | grep "$FPT" \
-					   | awk -F'\t' '{ print $2 }'`"
-
-				if [ -z "$CURR_FILE" ]; then
-					echo "(!) Invalid file pointer." \
-					     "See: showmds"
-					continue
-				fi
-
-			else
-				CURR_FILE="`printf '%s\n' "$INPUT" \
-					   | awk '{ print $2 }'`"
-
-				if [ -z "$CURR_FILE" ]; then
-					echo "(!) No file name given."
-					continue
-				fi
-			fi
-
-			if ! [ -f "$CURR_FILE" ]; then
-				echo "(!) File $CURR_FILE not found."
-				continue
-			fi
-
-			FILE_CONTENTS="`cat "$CURR_FILE"`"
-
-			check_file
-			if [ "$?" -ne 0 ]; then
-				continue
-			fi
-
-			PARSED_STRING="`pre_parse`"
-
-			if [ -z "$PARSED_STRING" ]; then
-				echo "(!) String not parsed or wrong format."
-				CURR_FILE=""
-				FILE_CONTENTS=""
-				continue
-			fi
-
-			output "`human_readable "$PARSED_STRING"`"
+			load_file "$INPUT"
 			;;
 
 		pretty)
@@ -366,7 +455,7 @@ while [ 1 ]; do
 				continue
 			fi
 
-			output "`human_readable "$PARSED_STRING"`"
+			output "`human_readable "$PARSED_STRING"`" NL
 			;;
 		output)
 			check_file
@@ -374,76 +463,11 @@ while [ 1 ]; do
 				continue
 			fi
 
-			output "$PARSED_STRING"
+			output "$PARSED_STRING" NL
 			;;
 
 		range\ *|read\ *|edit\ *|delete\ *)
-			check_file
-			if [ "$?" -ne 0 ]; then
-				continue
-			fi
-
-			SECT=`printf '%s\n' "$INPUT" | awk '{ print $2 }'`
-
-			if [ -z "$SECT" ]; then
-				echo "(!) Please input section."
-				continue
-			fi
-
-			RANGE=`sect_range "$PARSED_STRING" "$SECT"`
-
-			if [ "$?" -ne 0 ]; then
-				echo "(!) Could not find section: $SECT"
-				continue
-			fi
-
-			printf '%s\n' "$INPUT" | grep '^range ' > /dev/null
-
-			if [ "$?" -eq 0 ]; then
-				echo "$RANGE" \
-				| awk -F':' '
-				{
-					print $1 ": " $2
-					print $3 ": " $4
-					print $5 ": " $6
-				}'
-				continue
-			fi
-
-			RANGE_ARGS="`printf '%s\n' "$RANGE" \
-				    | awk -F':' ' { print $2 OFS $6 }'`"
-
-			printf '%s\n' "$INPUT" | grep '^read ' > /dev/null
-
-			if [ "$?" -eq 0 ]; then
-				read_range $RANGE_ARGS
-			fi
-
-			printf '%s\n' "$INPUT" | grep '^edit ' > /dev/null
-
-			if [ "$?" -eq 0 ]; then
-				edit_range $RANGE_ARGS
-			fi
-
-			printf '%s\n' "$INPUT" | grep '^delete ' > /dev/null
-
-			if [ "$?" -eq 0 ]; then
-				edit_range $RANGE_ARGS delete
-			fi
-
-			printf '%s\n' "$INPUT" \
-			| grep '^delete \|^edit ' > /dev/null
-
-			if [ "$?" -eq 0 ]; then
-				PARSED_STRING=`pre_parse`
-
-				if [ -z "$PARSED_STRING" ]; then
-					echo "(!) String not parsed or wrong format."
-					CURR_FILE=""
-					FILE_CONTENTS=""
-					continue
-				fi
-			fi
+			range_ops "$INPUT"
 			;;
 		showread)
 			echo "\"$READER\""
