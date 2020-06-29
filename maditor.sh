@@ -206,14 +206,14 @@ human_readable() {
 
 sect_range() {
 
-	SECTION=`echo $2 | sed 's/^\(.*\)\.$/\1/g'`
+	SECTION=`echo "$2" | sed 's/^\(.*\)\.$/\1/g'`
 
 	printf '%s\n' "$1" \
 	| awk -F'\t' -v sect="$SECTION" '
 
 	{
 		if (!sect_found) {
-			if ($3 == sect) {
+			if ($3 "" == sect "") {
 				sect_found = 1
 				lstart = $1
 				sect_md = $2
@@ -309,7 +309,7 @@ range_ops() {
 		return 1
 	fi
 
-	SECT=`printf '%s\n' "$COMM" | awk '{ print $2 }'`
+	SECT=`printf '%s' "$COMM" | awk '{ print $2 }'`
 
 	if [ -z "$SECT" ]; then
 		echo "(!) Please input section."
@@ -323,7 +323,7 @@ range_ops() {
 		return 3
 	fi
 
-	printf '%s\n' "$COMM" | grep '^range ' > /dev/null
+	printf '%s' "$COMM" | grep '^range ' > /dev/null
 
 	if [ "$?" -eq 0 ]; then
 		echo "$RANGE" \
@@ -336,7 +336,7 @@ range_ops() {
 		return 0
 	fi
 
-	RANGE_ARGS="`printf '%s\n' "$RANGE" \
+	RANGE_ARGS="`printf '%s' "$RANGE" \
 		    | awk -F':' ' { print $2 OFS $6 }'`"
 
 	case $COMM in
