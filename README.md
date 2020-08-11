@@ -1,3 +1,3 @@
-# Maditor
+# MaDiTT
 
-A powerful markdown editor written for UNIX shell. Especially well-suited for editing complex markdown files.
+A markdown editor written for UNIX shell. Especially well-suited for editing complex markdown files.

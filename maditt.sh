@@ -136,12 +136,12 @@ load_file() {
 			return 1
 		fi
 
-		FPT="`printf '%s\n' "$COMM" \
-		     | awk '{ print $2 }'`"
+		FPT="`printf '%s' "$COMM" \
+		    | awk '{ print $2 }'`"
 
-		CURR_FILE="`printf '%s\n' "$MD_FILES" \
-			   | grep "$FPT" \
-			   | awk -F'\t' '{ print $2 }'`"
+		CURR_FILE="`printf '%s' "$MD_FILES" \
+			  | grep "$FPT" \
+			  | awk -F'\t' '{ print $2 }'`"
 
 		if [ -z "$CURR_FILE" ]; then
 			echo "(!) Invalid file pointer." \
@@ -150,8 +150,8 @@ load_file() {
 		fi
 
 	else
-		CURR_FILE="`printf '%s\n' "$COMM" \
-			   | awk '{ print $2 }'`"
+		CURR_FILE="`printf '%s' "$COMM" \
+			  | sed -n 's/^loadfn \(.*\)$/\1/p'`"
 
 		if [ -z "$CURR_FILE" ]; then
 			echo "(!) No file name given."
@@ -181,7 +181,7 @@ load_file() {
 		return 6
 	fi
 
-	output "`human_readable "$PARSED_STRING"`" NL
+	output "(!) Successfully loaded file: $1" NL
 
 	return 0
 }
@@ -229,9 +229,14 @@ sect_range() {
 			exit 1
 		}
 		else {
-			print "start:" lstart \
-			     ":lines:" $1 - lstart \
-			     ":end:" $1 - 1
+			if (lstart < $1) {
+				print "start:" lstart \
+				     ":lines:" $1 - lstart \
+				     ":end:" $1 - 1
+				exit 0
+			}
+
+			exit 2
 		}
 	}'
 }
@@ -272,17 +277,18 @@ edit_range() {
 			rm "$TEMP_FILE"
 			return 0
 		fi
-	elif [ "$3" != "delete" ]; then
-		echo "(!) Internal bug!"
-		exit -1
 	fi
 
 	KEEP_UNTIL="`printf '%s\n' "$1" | awk '{ print $1 - 1 }'`"
 	KEEP_AFTER="`printf '%s\n' "$2" | awk '{ print $1 + 1 }'`"
 
-	FIRST_PART="`printf '%s\n' "$FILE_CONTENTS" \
-		    | sed -n "1,${KEEP_UNTIL}p"; echo .`"
-	FIRST_PART="${FIRST_PART%.}"
+	if [ "$1" -eq 1 ]; then
+		FIRST_PART=""
+	else
+		FIRST_PART="`printf '%s\n' "$FILE_CONTENTS" \
+			    | sed -n "1,${KEEP_UNTIL}p"; echo .`"
+		FIRST_PART="${FIRST_PART%.}"
+	fi
 
 	SECOND_PART="`printf '%s\n' "$FILE_CONTENTS" \
 		    | sed -n "${KEEP_AFTER},\\$p"; echo .`"
@@ -290,13 +296,22 @@ edit_range() {
 
 	UNDO_KEEP="$FILE_CONTENTS"
 
-	if [ "$3" != "delete" ]; then
+	if [ -z "$3" ]; then
 		CHANGES="`cat "$TEMP_FILE"; echo .`"
 		CHANGES="${CHANGES%.}"
 		FILE_CONTENTS="${FIRST_PART}${CHANGES}${SECOND_PART}"
 		rm "$TEMP_FILE"
 	else
-		FILE_CONTENTS="${FIRST_PART}${SECOND_PART}"
+		case $3 in
+			delete)
+				FILE_CONTENTS="${FIRST_PART}${SECOND_PART}"
+				;;
+			flatten)
+				CHANGES="`read_range $1 $2 \
+					 | sed '2,$s/^#\(#.*\)$/\1/g'; echo .`"
+				FILE_CONTENTS="${FIRST_PART}${CHANGES%.}${SECOND_PART}"
+				;;
+		esac
 	fi
 }
 
@@ -337,7 +352,7 @@ range_ops() {
 	fi
 
 	RANGE_ARGS="`printf '%s' "$RANGE" \
-		    | awk -F':' ' { print $2 OFS $6 }'`"
+		    | awk -F':' '{ print $2 OFS $6 }'`"
 
 	case $COMM in
 		read\ *)
@@ -349,25 +364,32 @@ range_ops() {
 		delete\ *)
 			edit_range $RANGE_ARGS delete
 			;;
+		flatten\ *)
+			edit_range $RANGE_ARGS flatten
+			;;
 		*)
 			return 4
 			;;
 	esac
 
 	case $COMM in
-		delete\ *|edit\ *)
-			PARSED_STRING=`pre_parse`
-
-			if [ -z "$PARSED_STRING" ]; then
-				echo "(!) String not parsed or wrong format."
-				CURR_FILE=""
-				FILE_CONTENTS=""
-				return 4
-			fi
-			;;
+		delete\ *|edit\ *|flatten\ *)
+			refresh
+		;;
 	esac
 
 	return 0
+}
+
+refresh() {
+	PARSED_STRING=`pre_parse`
+
+	if [ -z "$PARSED_STRING" ]; then
+		echo "(!) String not parsed or wrong format."
+		CURR_FILE=""
+		FILE_CONTENTS=""
+		return 4
+	fi
 }
 
 output() {
@@ -383,34 +405,53 @@ output() {
 print_help() {
 
 	HELP_STRING=\
-"\tloadfn <fname>\t\tload file\n\
-\tgetmds\t\t\tfind md files in subfolders\n\
-\tshowmds\t\t\tshow found md files\n\
-\tload f<num>\t\tload file from getmds table\n\
+"loadfn <fname>;load file\n\
+getmds;find md files in subfolders\n\
+showmds;show found md files\n\
+load f<num>;load file from getmds table\n\
+save;save changes\n\
 \n\
-\treparse\t\t\treparse file\n\
-\toutput\t\t\tprint parsed output\n\
-\tpretty\t\t\tpretty print parsed output\n\
+output;print parsed output (debug)\n\
+pretty;pretty print parsed output\n\
 \n\
-\trange <sect>\t\tshow section range\n\
-\tread <sect>\t\tshow section contents\n\
-\tedit <sect>\t\tedit section\n\
-\tmove <src> <dest>\tmove section\n\
-\tdelete <sect>\t\tdelete section\n\
+range <sect>;show section range\n\
+read <sect>;show section contents\n\
+edit <sect>;edit section\n\
 \n\
-\tshowread\t\tshow current reader\n\
-\tsetread <comm>\t\tset text reader\n\
-\tshowedit\t\tshow current text editor\n\
-\tsetedit <comm>\t\tset text editor\n\
+move <src> <dest>;move section\n\
+delete <sect>;delete section\n\
+flatten <sect>;flatten section\n\
 \n\
-\tundo\t\t\tundo\n\
-\tredo\t\t\tredo\n\
+showread;show current reader\n\
+setread <comm>;set text reader\n\
+showedit;show current text editor\n\
+setedit <comm>;set text editor\n\
 \n\
-\thelp\t\t\tshow this\n\
-\tquit\t\t\tquit"
+undo;undo\n\
+redo;redo\n\
+\n\
+help;show this\n\
+quit;quit"
 
-	output "$HELP_STRING" FORCE_ECHO
+	output "$HELP_STRING" FORCE_ECHO | column -t -e -s';'
 }
+
+print_header() {
+	HEADER_STRING=\
+"\nMaDiTT: A powerful MarkDown ediTTor.\n\n\
+\tAuthor: Stjepan Poljak\n\
+\tE-Mail: stjepan.poljak@protonmail.com\n\
+\tYear: 2020\n\n\
+\tType 'help' to get started.\n"
+
+	output "$HEADER_STRING" FORCE_ECHO
+}
+
+print_header
+
+if ! [ -z "$1" ]; then
+	load_file "loadfn $1"
+fi
 
 while [ 1 ]; do
 
@@ -448,7 +489,11 @@ while [ 1 ]; do
 		loadfn\ *|load\ *)
 			load_file "$INPUT"
 			;;
+		save)
+			cp "$CURR_FILE" "$CURR_FILE.backup"
 
+			output "$FILE_CONTENTS" > "$CURR_FILE"
+			;;
 		pretty)
 			check_file
 			if [ "$?" -ne 0 ]; then
@@ -466,7 +511,7 @@ while [ 1 ]; do
 			output "$PARSED_STRING" NL
 			;;
 
-		range\ *|read\ *|edit\ *|delete\ *)
+		range\ *|read\ *|edit\ *|delete\ *|flatten\ *)
 			range_ops "$INPUT"
 			;;
 		showread)
@@ -501,6 +546,7 @@ while [ 1 ]; do
 				REDO_KEEP="$FILE_CONTENTS"
 				FILE_CONTENTS="$UNDO_KEEP"
 				UNDO_KEEP=""
+				refresh
 			else
 				echo "(*) Nothing to undo."
 			fi
@@ -510,6 +556,7 @@ while [ 1 ]; do
 				UNDO_KEEP="$FILE_CONTENTS"
 				FILE_CONTENTS="$REDO_KEEP"
 				REDO_KEEP=""
+				refresh
 			else
 				echo "(*) Nothing to redo."
 			fi
