@@ -392,6 +392,12 @@ refresh() {
 	fi
 }
 
+save_changes() {
+	cp "$CURR_FILE" "$CURR_FILE.backup"
+
+	output "$FILE_CONTENTS" > "$CURR_FILE"
+}
+
 output() {
 	if [ "$2" = "FORCE_ECHO" ]; then
 		echo "$1" | "$READER"
@@ -400,6 +406,53 @@ output() {
 	else
 		printf '%s' "$1" | "$READER"
 	fi
+}
+
+try_quit() {
+
+	if [ -z "$CURR_FILE" ]; then
+		return 0
+	fi
+
+	ORIGINAL_CONTENTS="`cat "$CURR_FILE"; echo .`"
+	ORIGINAL_CONTENTS="${ORIGINAL_CONTENTS%.}"
+
+	SAVE_INPUT=""
+
+	if ! [ "$ORIGINAL_CONTENTS" = "$FILE_CONTENTS" ]; then
+		while [ 1 ]; do
+
+			echo -n "(*) Save changes? (yes/no/cancel) "
+			read SAVE_INPUT
+
+			case $SAVE_INPUT in
+				yes)
+					save_changes
+					echo "(i) Changes saved!"
+					return 0
+					;;
+				no)
+					echo "(i) Exiting..."
+					return 0
+					;;
+				cancel)
+					return 1
+					;;
+				*)
+					continue
+					;;
+			esac
+		done
+	else
+		return 0
+	fi
+
+	return 2 # bug
+}
+
+trap_sigint() {
+	try_quit && exit 0
+	return 0
 }
 
 print_help() {
@@ -447,6 +500,8 @@ print_header() {
 	output "$HEADER_STRING" FORCE_ECHO
 }
 
+trap trap_sigint INT
+
 print_header
 
 if ! [ -z "$1" ]; then
@@ -490,9 +545,7 @@ while [ 1 ]; do
 			load_file "$INPUT"
 			;;
 		save)
-			cp "$CURR_FILE" "$CURR_FILE.backup"
-
-			output "$FILE_CONTENTS" > "$CURR_FILE"
+			save_changes
 			;;
 		pretty)
 			check_file
@@ -562,11 +615,15 @@ while [ 1 ]; do
 			fi
 			;;
 		quit|exit)
-			break
+			try_quit && break
 			;;
 		*)
-			echo "(!) Unknown command: $INPUT. Try help."
+			if ! [ -z "$INPUT" ]; then
+				echo "(!) Unknown command: $INPUT. Try help."
+			fi
 			;;
 	esac
 
 done
+
+exit 0
